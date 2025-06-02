@@ -12,9 +12,16 @@ app.use(helmet({
 }));
 
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  credentials: true
+  origin: [
+    'http://localhost:3000',           // Local development
+    'https://your-frontend-url.vercel.app',  // Production (you'll get this when you deploy)
+    'https://transaction-summary-backend.railway.app'  // Allow same domain
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
+
 
 // Rate limiting - 100 requests per 15 minutes
 const limiter = rateLimit({
