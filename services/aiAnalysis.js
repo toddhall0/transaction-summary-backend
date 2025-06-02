@@ -1,3 +1,10 @@
+const Anthropic = require('@anthropic-ai/sdk');
+
+// Initialize Anthropic client
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+});
+
 const CONTRACT_ANALYSIS_PROMPT = `
 You are an expert real estate contract analyzer. Analyze this contract and extract key information into a structured JSON format.
 
@@ -157,11 +164,19 @@ CRITICAL vs STANDARD TASKS:
 ANALYZE THIS CONTRACT:
 `;
 
-// Enhanced analysis function with validation
+/**
+ * Analyze contract text using Claude AI
+ * @param {string} contractText - Raw contract text
+ * @returns {Promise<Object>} - Structured contract analysis
+ */
 async function analyzeContract(contractText) {
   try {
     console.log('🤖 Starting enhanced Claude analysis...');
     
+    if (!process.env.ANTHROPIC_API_KEY) {
+      throw new Error('ANTHROPIC_API_KEY environment variable is not set');
+    }
+
     const message = await anthropic.messages.create({
       model: 'claude-3-sonnet-20240229',
       max_tokens: 8000,
@@ -200,7 +215,11 @@ async function analyzeContract(contractText) {
   }
 }
 
-// Validation function to catch common errors
+/**
+ * Validate analysis results to catch common errors
+ * @param {Object} analysis - Analysis result object
+ * @returns {Object} - Validation result with errors
+ */
 function validateAnalysis(analysis) {
   const errors = [];
   
