@@ -178,7 +178,7 @@ async function analyzeContract(contractText) {
     }
 
     const message = await anthropic.messages.create({
-      model: 'claude-3-sonnet-20240229',
+      model: 'claude-3-5-sonnet-20241022',
       max_tokens: 8000,
       temperature: 0.1, // Lower temperature for more consistent extraction
       messages: [
