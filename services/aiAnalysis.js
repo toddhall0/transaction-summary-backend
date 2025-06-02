@@ -1,160 +1,246 @@
-const Anthropic = require('@anthropic-ai/sdk');
-
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
-
 const CONTRACT_ANALYSIS_PROMPT = `
-You are an expert real estate contract analyzer. Analyze this contract and extract key information in the following JSON structure. Be precise with dates, amounts, and timing language from the contract.
+You are an expert real estate contract analyzer. Analyze this contract and extract key information into a structured JSON format.
 
-Return ONLY valid JSON in this exact structure:
+CRITICAL REQUIREMENTS:
+1. Extract EXACT dates, amounts, and names from the contract text
+2. If information is unclear or missing, use "TBD" or null
+3. Calculate all date dependencies accurately
+4. Identify ALL contingencies and deadlines
+5. Capture complete party information including entity types
 
+REQUIRED JSON STRUCTURE:
 {
   "property": {
-    "address": "full property address",
-    "apn": "assessor parcel number or null",
-    "size": "lot size or square footage or null",
-    "purchasePrice": number
-  },
-  "escrow": {
-    "openingDate": "YYYY-MM-DD"
+    "address": "Full property address exactly as written",
+    "apn": "Assessor Parcel Number if mentioned",
+    "size": "Property size/acreage if mentioned",
+    "purchasePrice": <numeric value only>,
+    "propertyType": "residential|commercial|land|development"
   },
   "parties": {
     "buyer": {
-      "name": "buyer entity name",
-      "type": "entity type (LLC, Corp, Individual, etc.)",
-      "contact": "contact person or null",
-      "phone": "phone number or null",
-      "email": "email address or null"
+      "name": "Exact legal name",
+      "type": "Individual|LLC|Corporation|Partnership|Trust",
+      "contact": "Primary contact person if different from entity",
+      "phone": "Phone number if provided",
+      "email": "Email if provided",
+      "address": "Address if provided"
     },
     "seller": {
-      "name": "seller entity name",
-      "type": "entity type",
-      "contact": "contact person or null",
-      "phone": "phone number or null", 
-      "email": "email address or null"
+      "name": "Exact legal name", 
+      "type": "Individual|LLC|Corporation|Partnership|Trust",
+      "contact": "Primary contact person if different from entity",
+      "phone": "Phone number if provided",
+      "email": "Email if provided",
+      "address": "Address if provided"
     }
+  },
+  "escrow": {
+    "openingDate": "YYYY-MM-DD format",
+    "escrowCompany": "Name if mentioned",
+    "escrowOfficer": "Name if mentioned"
   },
   "deposits": {
     "firstDeposit": {
-      "amount": number,
-      "timing": "exact timing description from contract",
+      "amount": <numeric value>,
+      "timing": "Exact contract language about when due",
+      "actualDate": "YYYY-MM-DD calculated from timing",
       "refundable": boolean,
-      "refundableUntil": "date or condition description"
+      "refundableUntil": "YYYY-MM-DD or null"
     },
     "secondDeposit": {
-      "amount": number or null,
-      "timing": "timing description or null",
-      "refundable": boolean
+      "amount": <numeric value>,
+      "timing": "Exact contract language about when due", 
+      "actualDate": "YYYY-MM-DD calculated from timing",
+      "refundable": boolean,
+      "refundableUntil": "YYYY-MM-DD or null"
     },
-    "totalDeposits": number
+    "totalDeposits": <sum of all deposits>
   },
   "dueDiligence": {
-    "period": "description from contract",
+    "period": "Exact contract language (e.g., '30 days from Opening of Escrow')",
     "startDate": "YYYY-MM-DD",
-    "endDate": "YYYY-MM-DD",
+    "endDate": "YYYY-MM-DD", 
     "tasks": [
       {
-        "task": "task name",
-        "timing": "timing from contract with full trigger reference",
+        "task": "Property Inspections",
+        "timing": "Exact contract language with trigger reference",
+        "actualDate": "YYYY-MM-DD calculated",
         "critical": boolean,
-        "triggerKey": "Opening of Escrow|Title Commitment|Loan Application|Environmental Report|Survey Completion",
-        "daysFromTrigger": number
+        "triggerKey": "Opening of Escrow|Title Commitment|Survey Completion|etc",
+        "daysFromTrigger": <number>
       }
     ]
   },
   "contingencies": [
     {
-      "name": "contingency name",
-      "timing": "timing description from contract",
-      "description": "what must happen",
+      "name": "Descriptive name",
+      "timing": "Exact contract language",
+      "deadline": "YYYY-MM-DD calculated",
+      "description": "What buyer/seller must do",
       "critical": boolean,
       "silenceRule": "Approval|Termination|N/A",
-      "triggerKey": "Opening of Escrow|Title Commitment|Loan Application|Environmental Report|Survey Completion|null",
-      "daysFromTrigger": number or null
+      "triggerKey": "Opening of Escrow|etc",
+      "daysFromTrigger": <number>
     }
   ],
   "closingInfo": {
     "outsideDate": "YYYY-MM-DD",
-    "actualClosing": "description from contract",
+    "actualClosing": "Description of actual closing terms",
     "extensions": {
       "automatic": boolean,
-      "buyerOptions": "description or None",
-      "sellerOptions": "description or None"
-    }
+      "buyerOptions": "Description",
+      "sellerOptions": "Description"
+    },
+    "possession": "When buyer gets possession",
+    "prorations": "How costs are split"
   },
   "closingDocuments": {
     "exhibits": [
       {
-        "document": "document name",
-        "exhibit": "exhibit letter",
-        "included": true
+        "document": "Document name",
+        "exhibit": "Letter/Number",
+        "included": boolean
       }
     ],
     "required": [
       {
-        "document": "document name",
-        "exhibit": "None",
-        "included": false
+        "document": "Document name", 
+        "exhibit": "None or letter/number",
+        "included": boolean
       }
     ]
+  },
+  "specialConditions": [
+    {
+      "condition": "Description of special condition",
+      "deadline": "YYYY-MM-DD if applicable",
+      "party": "buyer|seller|both"
+    }
+  ],
+  "financing": {
+    "cashDeal": boolean,
+    "loanAmount": <numeric or null>,
+    "loanType": "Conventional|FHA|VA|etc or null",
+    "loanContingency": {
+      "exists": boolean,
+      "deadline": "YYYY-MM-DD or null",
+      "terms": "Description"
+    }
   }
 }
 
-Important instructions:
-- Extract dates in YYYY-MM-DD format
-- If information is missing, use null
-- Be precise with timing language from the contract
-- Identify trigger events accurately
-- For triggerKey, use exactly one of the predefined options or null
-- Ensure all amounts are numbers, not strings
-- Make sure the JSON is valid and properly formatted
+DATE CALCULATION RULES:
+- Always calculate actual dates from trigger dates + business days/calendar days as specified
+- If contract says "5 business days after X", count only weekdays
+- If contract says "30 days from X", count calendar days
+- If trigger date is unknown, use "TBD" for actual date
 
-Contract text:
+COMMON TRIGGER EVENTS:
+- Opening of Escrow
+- Title Commitment received
+- Survey completion
+- Environmental report completion
+- Loan application submission
+- Feasibility period start
+- Due diligence period start
+
+ENTITY TYPE IDENTIFICATION:
+- Look for "LLC", "Inc.", "Corporation", "Partnership", "Trust", "LP"
+- Individual if no entity designator
+- Pay attention to exact legal names
+
+CRITICAL vs STANDARD TASKS:
+- Critical: Could terminate contract if not met
+- Standard: Important but typically don't terminate contract
+
+ANALYZE THIS CONTRACT:
 `;
 
-async function analyzeContractWithClaude(contractText) {
+// Enhanced analysis function with validation
+async function analyzeContract(contractText) {
   try {
-    console.log('🤖 Starting Claude analysis...');
+    console.log('🤖 Starting enhanced Claude analysis...');
     
-    const response = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-20241022',
-      max_tokens: 4000,
-      temperature: 0.1,
-      messages: [{
-        role: 'user',
-        content: CONTRACT_ANALYSIS_PROMPT + contractText
-      }]
+    const message = await anthropic.messages.create({
+      model: 'claude-3-sonnet-20240229',
+      max_tokens: 8000,
+      temperature: 0.1, // Lower temperature for more consistent extraction
+      messages: [
+        {
+          role: 'user',
+          content: CONTRACT_ANALYSIS_PROMPT + contractText
+        }
+      ]
     });
 
-    const analysisText = response.content[0].text;
-    console.log('📄 Claude response received, parsing JSON...');
+    const responseText = message.content[0].text;
+    console.log('📝 Raw Claude response length:', responseText.length);
     
-    // Extract JSON from the response
-    const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
+    // Extract JSON from response
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      throw new Error('No valid JSON found in Claude response');
+      throw new Error('No JSON found in Claude response');
     }
 
     const analysisResult = JSON.parse(jsonMatch[0]);
-    console.log('✅ Claude analysis completed successfully');
     
+    // Validate critical fields
+    const validation = validateAnalysis(analysisResult);
+    if (!validation.isValid) {
+      console.warn('⚠️ Analysis validation issues:', validation.errors);
+    }
+    
+    console.log('✅ Contract analysis completed successfully');
     return analysisResult;
+
   } catch (error) {
-    console.error('❌ Claude analysis error:', error);
-    throw new Error(`AI analysis failed: ${error.message}`);
+    console.error('❌ Contract analysis error:', error);
+    throw new Error(`Contract analysis failed: ${error.message}`);
   }
 }
 
-async function analyzeContract(contractText, aiProvider = 'claude') {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    throw new Error('ANTHROPIC_API_KEY not configured');
+// Validation function to catch common errors
+function validateAnalysis(analysis) {
+  const errors = [];
+  
+  // Check required fields
+  if (!analysis.property?.purchasePrice) {
+    errors.push('Purchase price not found');
   }
   
-  // For now, we only support Claude. OpenAI can be added later.
-  return await analyzeContractWithClaude(contractText);
+  if (!analysis.parties?.buyer?.name) {
+    errors.push('Buyer name not found');
+  }
+  
+  if (!analysis.parties?.seller?.name) {
+    errors.push('Seller name not found');
+  }
+  
+  if (!analysis.escrow?.openingDate) {
+    errors.push('Opening of escrow date not found');
+  }
+  
+  // Validate date formats
+  const dateFields = [
+    analysis.escrow?.openingDate,
+    analysis.dueDiligence?.endDate,
+    analysis.closingInfo?.outsideDate
+  ];
+  
+  dateFields.forEach((date, index) => {
+    if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      errors.push(`Invalid date format in field ${index}`);
+    }
+  });
+  
+  return {
+    isValid: errors.length === 0,
+    errors: errors
+  };
 }
 
 module.exports = {
-  analyzeContract
+  analyzeContract,
+  validateAnalysis
 };
