@@ -40,13 +40,18 @@ app.use((req, res, next) => {
   next();
 });
 
-// Health check endpoint
+// Health check endpoint - Railway compatible
 app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
+
+// Alternative health check that Railway might prefer
+app.get('/', (req, res) => {
   res.status(200).json({
     status: 'OK',
+    message: 'Transaction Summary API',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development',
-    port: process.env.PORT || 3001
+    environment: process.env.NODE_ENV || 'development'
   });
 });
 
