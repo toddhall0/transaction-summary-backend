@@ -459,4 +459,21 @@ router.get('/test-db', authenticateToken, async (req, res) => {
   }
 });
 
+// Add this to routes/contracts.js
+router.post('/:id/feedback', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rating, contractData, timestamp } = req.body;
+    const userId = req.user.id;
+
+    // Store feedback in database (you'll need to create the table)
+    console.log('Feedback received:', { contractId: id, rating, userId });
+    
+    res.json({ success: true, message: 'Feedback submitted successfully' });
+  } catch (error) {
+    console.error('Feedback submission error:', error);
+    res.status(500).json({ error: 'Failed to submit feedback' });
+  }
+});
+
 module.exports = router;
