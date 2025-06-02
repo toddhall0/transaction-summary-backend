@@ -40,18 +40,23 @@ app.use((req, res, next) => {
   next();
 });
 
-// Health check endpoint - Railway compatible
+// Railway-compatible health checks (MUST BE FIRST)
+app.get('/', (req, res) => {
+  res.status(200).send('OK');
+});
+
 app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
 
-// Alternative health check that Railway might prefer
-app.get('/', (req, res) => {
+// Detailed status endpoint
+app.get('/status', (req, res) => {
   res.status(200).json({
-    status: 'OK',
-    message: 'Transaction Summary API',
+    status: 'healthy',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development',
+    port: process.env.PORT || 3001
   });
 });
 
@@ -61,6 +66,15 @@ app.get('/api/test', (req, res) => {
     message: 'API is working!', 
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development'
+  });
+});
+
+// Simple test route
+app.get('/api/simple', (req, res) => {
+  res.json({ 
+    message: 'Simple route works!',
+    method: req.method,
+    path: req.path 
   });
 });
 
@@ -87,6 +101,36 @@ app.get('/api/routes', (req, res) => {
   res.json({ routes, totalRoutes: routes.length });
 });
 
+// Debug file system
+app.get('/api/debug', (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+  
+  try {
+    const files = fs.readdirSync(path.join(__dirname));
+    const routesExist = fs.existsSync(path.join(__dirname, 'routes'));
+    const authExists = fs.existsSync(path.join(__dirname, 'routes', 'auth.js'));
+    const contractsExists = fs.existsSync(path.join(__dirname, 'routes', 'contracts.js'));
+    
+    res.json({
+      currentDirectory: __dirname,
+      files: files,
+      routesFolder: routesExist,
+      authFile: authExists,
+      contractsFile: contractsExists,
+      environmentVariables: {
+        hasSupabaseUrl: !!process.env.SUPABASE_URL,
+        hasSupabaseKey: !!process.env.SUPABASE_SERVICE_KEY,
+        hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
+        hasJwtSecret: !!process.env.JWT_SECRET,
+        nodeEnv: process.env.NODE_ENV
+      }
+    });
+  } catch (error) {
+    res.json({ error: error.message });
+  }
+});
+
 // Import and use route modules
 try {
   const authRoutes = require('./routes/auth');
@@ -99,6 +143,7 @@ try {
   console.log('✅ Routes loaded successfully');
 } catch (error) {
   console.error('❌ Error loading routes:', error.message);
+  console.error('Stack:', error.stack);
 }
 
 // Error handling middleware
@@ -119,7 +164,7 @@ app.use('*', (req, res) => {
     error: 'Route not found',
     method: req.method,
     path: req.originalUrl,
-    availableRoutes: ['/health', '/api/test', '/api/routes', '/api/auth/*', '/api/contracts/*']
+    availableRoutes: ['/', '/health', '/status', '/api/test', '/api/routes', '/api/auth/*', '/api/contracts/*']
   });
 });
 
@@ -147,7 +192,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   testDatabaseConnection();
 });
 
-// Graceful shutdown
+// Graceful shutdown handlers
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
   server.close(() => {
