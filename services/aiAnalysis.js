@@ -11,10 +11,39 @@ You are an expert real estate contract analyzer. Analyze this contract and extra
 CRITICAL REQUIREMENTS:
 1. Extract EXACT dates, amounts, and names from the contract text
 2. Determine pricing structure (per acre, per unit, per lot, lump sum, etc.)
-3. Identify when deposits become non-refundable
-4. Extract ALL contact information for parties, lawyers, title companies
-5. Calculate deposit refundability timing precisely
-6. If information is unclear or missing, use "TBD" or null
+3. Identify when deposits become non-refundable (deposits are typically refundable until end of feasibility/due diligence period)
+4. Extract ALL contact information from notice provisions and signature blocks
+5. Due diligence and feasibility periods are THE SAME THING - do not create separate periods
+6. Identify ALL individual contingencies and approvals separately
+7. If information is unclear or missing, use "TBD" or null
+
+NOTICE PROVISIONS EXTRACTION:
+- Look for "Notice" sections that list all parties and their contact information
+- Extract addresses, phone numbers, emails for buyer, seller, attorneys, title company
+- Include law firm names, title company names, escrow company details
+- This is typically near the end of the contract in signature blocks or notice sections
+
+DEPOSIT REFUNDABILITY RULES:
+- First deposit: Usually refundable until end of feasibility/due diligence period
+- Second deposit: Usually refundable until deposited, then becomes non-refundable 
+- Additional deposits: Typically non-refundable once deposited
+- Look for specific language about when deposits become "hard" or "non-refundable"
+
+DUE DILIGENCE = FEASIBILITY PERIOD:
+- These are the same period, just different names
+- Do not create separate "Due Diligence" and "Feasibility" periods
+- Use whichever term appears in the contract
+- Typical length: 30-180 days from opening of escrow
+
+CONTINGENCIES - IDENTIFY EACH SEPARATELY:
+Instead of "Government Approvals", list each specific approval:
+- City Planning Commission Approval
+- County Zoning Approval  
+- Building Permit Approval
+- Environmental Impact Review
+- Fire Department Approval
+- Utility Connection Approvals
+- Each should be a separate contingency with its own deadline
 
 REQUIRED JSON STRUCTURE:
 {
@@ -80,23 +109,23 @@ REQUIRED JSON STRUCTURE:
       "timing": "Exact contract language about when due",
       "actualDate": "YYYY-MM-DD calculated from timing or TBD",
       "refundable": true,
-      "refundableUntil": "YYYY-MM-DD when it becomes non-refundable or TBD",
+      "refundableUntil": "YYYY-MM-DD when feasibility/due diligence period ends",
       "status": "not_yet_due|due_soon|past_due|made",
-      "refundabilityReason": "Due diligence expiration|Feasibility period end|etc"
+      "refundabilityReason": "Refundable until end of feasibility period"
     },
     "secondDeposit": {
       "amount": <numeric value>,
       "timing": "Exact contract language about when due", 
       "actualDate": "YYYY-MM-DD calculated from timing or TBD",
-      "refundable": false,
-      "refundableUntil": null,
+      "refundable": true,
+      "refundableUntil": "YYYY-MM-DD when deposit is actually made",
       "status": "not_yet_due|due_soon|past_due|made",
-      "refundabilityReason": "Non-refundable from submission"
+      "refundabilityReason": "Refundable until deposited, then becomes non-refundable"
     },
     "totalDeposits": <sum of all deposits>
   },
   "dueDiligence": {
-    "period": "Exact contract language (e.g., '30 days from Opening of Escrow')",
+    "period": "Exact contract language (e.g., '60 days from Opening of Escrow' OR '180 day feasibility period')",
     "startDate": "YYYY-MM-DD or TBD",
     "endDate": "YYYY-MM-DD or TBD", 
     "daysFromTrigger": <number of days>,
@@ -115,13 +144,35 @@ REQUIRED JSON STRUCTURE:
   },
   "contingencies": [
     {
-      "name": "Descriptive name",
+      "name": "City Planning Commission Approval",
       "timing": "Exact contract language",
       "deadline": "YYYY-MM-DD calculated or TBD",
       "daysFromTrigger": <number>,
-      "triggerEvent": "Opening of Escrow|etc",
-      "description": "What buyer/seller must do",
-      "critical": boolean,
+      "triggerEvent": "Opening of Escrow|Application Submission|etc",
+      "description": "Specific approval required from City Planning Commission",
+      "critical": true,
+      "silenceRule": "Approval|Termination|N/A",
+      "party": "buyer|seller|both"
+    },
+    {
+      "name": "County Zoning Approval",
+      "timing": "Exact contract language",
+      "deadline": "YYYY-MM-DD calculated or TBD",
+      "daysFromTrigger": <number>,
+      "triggerEvent": "Opening of Escrow|Application Submission|etc",
+      "description": "Specific approval required from County Zoning Department",
+      "critical": true,
+      "silenceRule": "Approval|Termination|N/A", 
+      "party": "buyer|seller|both"
+    },
+    {
+      "name": "Building Permit Approval",
+      "timing": "Exact contract language",
+      "deadline": "YYYY-MM-DD calculated or TBD",
+      "daysFromTrigger": <number>,
+      "triggerEvent": "Opening of Escrow|Application Submission|etc",
+      "description": "Building permits for proposed development",
+      "critical": true,
       "silenceRule": "Approval|Termination|N/A",
       "party": "buyer|seller|both"
     }
