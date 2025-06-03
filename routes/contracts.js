@@ -476,4 +476,167 @@ router.post('/:id/feedback', authenticateToken, async (req, res) => {
   }
 });
 
+// Add this route to your routes/contracts.js file
+
+// Setup email reminders for contract dates
+router.post('/:id/setup-reminders', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { contractData, globalTriggers, calculatedDates, contractName } = req.body;
+    const userId = req.user.id;
+
+    // Get all users with access to this contract
+    const { data: contractShares, error: sharesError } = await supabase
+      .from('contract_shares')
+      .select(`
+        shared_with_email,
+        contracts!inner(user_id)
+      `)
+      .eq('contract_id', id);
+
+    if (sharesError) throw sharesError;
+
+    // Get contract owner
+    const { data: contract, error: contractError } = await supabase
+      .from('contracts')
+      .select('user_id')
+      .eq('id', id)
+      .single();
+
+    if (contractError) throw contractError;
+
+    // Get owner email
+    const { data: ownerProfile, error: ownerError } = await supabase
+      .from('user_profiles')
+      .select('email')
+      .eq('id', contract.user_id)
+      .single();
+
+    if (ownerError) throw ownerError;
+
+    // Collect all email addresses
+    const emailAddresses = [ownerProfile.email];
+    contractShares.forEach(share => {
+      if (!emailAddresses.includes(share.shared_with_email)) {
+        emailAddresses.push(share.shared_with_email);
+      }
+    });
+
+    // Collect all dates that need reminders
+    const reminderDates = [];
+
+    // Add global trigger dates
+    Object.entries(globalTriggers || {}).forEach(([trigger, date]) => {
+      if (date && date !== 'TBD') {
+        reminderDates.push({
+          eventName: trigger,
+          eventDate: date,
+          description: `${trigger} for ${contractName}`,
+          type: 'trigger'
+        });
+      }
+    });
+
+    // Add calculated dates
+    Object.entries(calculatedDates || {}).forEach(([key, dateInfo]) => {
+      if (dateInfo?.date && dateInfo.date !== 'TBD') {
+        reminderDates.push({
+          eventName: dateInfo.name || key,
+          eventDate: dateInfo.date,
+          description: `${dateInfo.name || key} for ${contractName}`,
+          type: 'calculated'
+        });
+      }
+    });
+
+    // Add contingency dates
+    contractData?.contingencies?.forEach((contingency) => {
+      if (contingency.deadline && contingency.deadline !== 'TBD') {
+        reminderDates.push({
+          eventName: contingency.name,
+          eventDate: contingency.deadline,
+          description: `${contingency.name} deadline for ${contractName}`,
+          type: 'contingency'
+        });
+      }
+    });
+
+    // Calculate reminder schedule for each date
+    const reminderSchedule = [];
+    const reminderOffsets = [30, 14, 7, 3, 0]; // days before
+
+    reminderDates.forEach(eventInfo => {
+      const eventDate = new Date(eventInfo.eventDate);
+      
+      reminderOffsets.forEach(daysBefore => {
+        const reminderDate = new Date(eventDate);
+        reminderDate.setDate(eventDate.getDate() - daysBefore);
+        
+        // Only schedule future reminders
+        if (reminderDate > new Date()) {
+          let reminderType;
+          if (daysBefore === 30) reminderType = '30 days before';
+          else if (daysBefore === 14) reminderType = '2 weeks before';
+          else if (daysBefore === 7) reminderType = '1 week before';
+          else if (daysBefore === 3) reminderType = '3 business days before';
+          else reminderType = 'On the date';
+
+          reminderSchedule.push({
+            contract_id: id,
+            event_name: eventInfo.eventName,
+            event_date: eventInfo.eventDate,
+            reminder_date: reminderDate.toISOString().split('T')[0],
+            reminder_type: reminderType,
+            description: eventInfo.description,
+            email_addresses: emailAddresses,
+            status: 'scheduled'
+          });
+        }
+      });
+    });
+
+    // Store reminders in database
+    if (reminderSchedule.length > 0) {
+      const { error: insertError } = await supabase
+        .from('email_reminders')
+        .insert(reminderSchedule);
+
+      if (insertError) throw insertError;
+    }
+
+    res.json({
+      success: true,
+      message: 'Email reminders scheduled successfully',
+      remindersScheduled: reminderSchedule.length,
+      recipients: emailAddresses.length
+    });
+
+  } catch (error) {
+    console.error('Setup reminders error:', error);
+    res.status(500).json({ error: 'Failed to setup email reminders' });
+  }
+});
+
+// Get scheduled reminders for a contract
+router.get('/:id/reminders', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { data: reminders, error } = await supabase
+      .from('email_reminders')
+      .select('*')
+      .eq('contract_id', id)
+      .eq('status', 'scheduled')
+      .order('reminder_date', { ascending: true });
+
+    if (error) throw error;
+
+    res.json({ success: true, reminders });
+
+  } catch (error) {
+    console.error('Get reminders error:', error);
+    res.status(500).json({ error: 'Failed to get reminders' });
+  }
+});
+
 module.exports = router;
