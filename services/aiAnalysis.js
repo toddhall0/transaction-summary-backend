@@ -8,13 +8,13 @@ const anthropic = new Anthropic({
 const CONTRACT_ANALYSIS_PROMPT = `
 You are an expert real estate contract analyzer. Analyze this contract and extract key information into a structured JSON format.
 
-CRITICAL REQUIREMENTS FOR CONTACT INFORMATION:
-1. Look specifically for "NOTICE" or "NOTICES" sections in the contract
-2. These sections typically contain official mailing addresses, email addresses, phone numbers
-3. Extract attorney information from notice addresses, not just signature blocks
-4. Find escrow/title company details from notice addresses
-5. Distinguish between mailing addresses and property addresses
-6. Extract ALL contact methods for each party (phone, email, fax, address)
+CRITICAL REQUIREMENTS:
+1. Extract EXACT dates, amounts, and names from the contract text
+2. Determine pricing structure (per acre, per unit, per lot, lump sum, etc.)
+3. Identify when deposits become non-refundable
+4. Extract ALL contact information for parties, lawyers, title companies
+5. Calculate deposit refundability timing precisely
+6. If information is unclear or missing, use "TBD" or null
 
 REQUIRED JSON STRUCTURE:
 {
@@ -22,9 +22,9 @@ REQUIRED JSON STRUCTURE:
     "address": "Full property address exactly as written",
     "apn": "Assessor Parcel Number if mentioned",
     "size": "Property size/acreage if mentioned",
-    "purchasePrice": <numeric value only>,
+    "purchasePrice": 0,
     "pricingStructure": "per acre|per unit|per lot|per square foot|lump sum|TBD",
-    "pricePerUnit": <numeric value if applicable>,
+    "pricePerUnit": 0,
     "unitType": "acres|lots|units|square feet|TBD",
     "propertyType": "residential|commercial|land|development"
   },
@@ -53,7 +53,7 @@ REQUIRED JSON STRUCTURE:
         "firm": "Law firm name",
         "address": {
           "street": "Attorney street address",
-          "city": "City", 
+          "city": "City",
           "state": "State",
           "zipCode": "ZIP code",
           "fullAddress": "Complete attorney address"
@@ -65,19 +65,19 @@ REQUIRED JSON STRUCTURE:
     },
     "seller": {
       "name": "Exact legal name from signature block",
-      "type": "Individual|LLC|Corporation|Partnership|Trust", 
+      "type": "Individual|LLC|Corporation|Partnership|Trust",
       "signatoryName": "Name of person signing if different from entity",
       "signatoryTitle": "Title of signatory",
       "noticeAddress": {
         "street": "Street address from notices section",
         "city": "City",
-        "state": "State", 
+        "state": "State",
         "zipCode": "ZIP code",
         "fullAddress": "Complete formatted address"
       },
       "contactInfo": {
         "phone": "Primary phone from notices",
-        "fax": "Fax number if provided", 
+        "fax": "Fax number if provided",
         "email": "Email from notices section",
         "alternatePhone": "Secondary phone if provided",
         "alternateEmail": "Secondary email if provided"
@@ -88,12 +88,12 @@ REQUIRED JSON STRUCTURE:
         "address": {
           "street": "Attorney street address",
           "city": "City",
-          "state": "State", 
+          "state": "State",
           "zipCode": "ZIP code",
           "fullAddress": "Complete attorney address"
         },
         "phone": "Attorney phone",
-        "fax": "Attorney fax", 
+        "fax": "Attorney fax",
         "email": "Attorney email"
       }
     }
@@ -105,7 +105,7 @@ REQUIRED JSON STRUCTURE:
       "street": "Title company street address",
       "city": "City",
       "state": "State",
-      "zipCode": "ZIP code", 
+      "zipCode": "ZIP code",
       "fullAddress": "Complete title company address"
     },
     "phone": "Title company phone",
@@ -116,7 +116,7 @@ REQUIRED JSON STRUCTURE:
     "name": "Escrow company name (may be same as title company)",
     "officer": "Escrow officer name",
     "address": {
-      "street": "Escrow company street address", 
+      "street": "Escrow company street address",
       "city": "City",
       "state": "State",
       "zipCode": "ZIP code",
@@ -133,22 +133,22 @@ REQUIRED JSON STRUCTURE:
   },
   "deposits": {
     "firstDeposit": {
-      "amount": <numeric value>,
+      "amount": 0,
       "timing": "Exact contract language about when due",
       "actualDate": "YYYY-MM-DD calculated from timing or TBD",
-      "refundable": boolean,
+      "refundable": true,
       "refundableUntil": "YYYY-MM-DD when it becomes non-refundable",
       "status": "not_yet_due|due_soon|past_due|made"
     },
     "secondDeposit": {
-      "amount": <numeric value>,
+      "amount": 0,
       "timing": "Exact contract language about when due",
-      "actualDate": "YYYY-MM-DD calculated from timing or TBD", 
-      "refundable": boolean,
+      "actualDate": "YYYY-MM-DD calculated from timing or TBD",
+      "refundable": false,
       "refundableUntil": "YYYY-MM-DD when it becomes non-refundable",
       "status": "not_yet_due|due_soon|past_due|made"
     },
-    "totalDeposits": <sum of all deposits>
+    "totalDeposits": 0
   },
   "dueDiligence": {
     "period": "Exact contract language (e.g., '30 days from Opening of Escrow')",
@@ -159,10 +159,10 @@ REQUIRED JSON STRUCTURE:
         "task": "Property Inspections",
         "timing": "Exact contract language with trigger reference",
         "triggerEvent": "Opening of Escrow|Title Commitment|Survey Completion|etc",
-        "daysFromTrigger": <number>,
-        "businessDays": boolean,
+        "daysFromTrigger": 0,
+        "businessDays": true,
         "actualDate": "YYYY-MM-DD calculated",
-        "critical": boolean,
+        "critical": true,
         "description": "What specifically must be done"
       }
     ]
@@ -170,21 +170,21 @@ REQUIRED JSON STRUCTURE:
   "contingencies": [
     {
       "name": "Descriptive name",
-      "timing": "Exact contract language", 
+      "timing": "Exact contract language",
       "triggerEvent": "Opening of Escrow|Title Commitment|etc",
-      "daysFromTrigger": <number>,
-      "businessDays": boolean,
+      "daysFromTrigger": 0,
+      "businessDays": true,
       "deadline": "YYYY-MM-DD calculated",
       "description": "What buyer/seller must do",
-      "critical": boolean,
+      "critical": true,
       "silenceRule": "Approval|Termination|N/A"
     }
   ],
   "closingInfo": {
     "outsideDate": "YYYY-MM-DD",
-    "actualClosing": "Description of actual closing terms", 
+    "actualClosing": "Description of actual closing terms",
     "extensions": {
-      "automatic": boolean,
+      "automatic": false,
       "buyerOptions": "Description",
       "sellerOptions": "Description"
     },
@@ -194,16 +194,16 @@ REQUIRED JSON STRUCTURE:
   "specialConditions": [
     {
       "condition": "Description of special condition",
-      "deadline": "YYYY-MM-DD if applicable", 
+      "deadline": "YYYY-MM-DD if applicable",
       "party": "buyer|seller|both"
     }
   ],
   "financing": {
-    "cashDeal": boolean,
-    "loanAmount": <numeric or null>,
+    "cashDeal": true,
+    "loanAmount": 0,
     "loanType": "Conventional|FHA|VA|etc or null",
     "loanContingency": {
-      "exists": boolean,
+      "exists": false,
       "deadline": "YYYY-MM-DD or null",
       "terms": "Description"
     }
@@ -217,13 +217,6 @@ EXTRACTION PRIORITY FOR CONTACTS:
 4. Escrow/Title company info may be in separate notices section
 5. Phone numbers may include office, cell, and fax
 6. Email addresses are critical - extract all mentioned
-
-COMMON NOTICE SECTION PATTERNS:
-- "All notices required or permitted hereunder shall be in writing and shall be served..."
-- "Buyer: [Name and Address]"
-- "Seller: [Name and Address]" 
-- "With a copy to: [Attorney information]"
-- "Title/Escrow Company: [Company details]"
 
 DATE CALCULATION RULES:
 - Always calculate actual dates from trigger dates + business days/calendar days as specified
@@ -261,7 +254,7 @@ async function analyzeContract(contractText) {
     const message = await anthropic.messages.create({
       model: 'claude-3-5-sonnet-20241022',
       max_tokens: 8000,
-      temperature: 0.1, // Lower temperature for more consistent extraction
+      temperature: 0.1,
       messages: [
         {
           role: 'user',
