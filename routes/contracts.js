@@ -639,4 +639,42 @@ router.get('/:id/reminders', authenticateToken, async (req, res) => {
   }
 });
 
+// PUT /api/contracts/:id/status
+router.put('/:id/status', authenticateToken, async (req, res) => {
+  const { status } = req.body;
+  const userId = req.user.id;
+  const contractId = req.params.id;
+
+  if (!status) {
+    return res.status(400).json({ error: 'Status is required' });
+  }
+
+  // Only the contract owner can change status
+  const { data: contract, error: fetchError } = await supabase
+    .from('contracts')
+    .select('user_id')
+    .eq('id', contractId)
+    .single();
+
+  if (fetchError || !contract) {
+    return res.status(404).json({ error: 'Contract not found' });
+  }
+
+  if (contract.user_id !== userId) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
+  const { error: updateError } = await supabase
+    .from('contracts')
+    .update({ metadata: { status }, updated_at: new Date().toISOString() })
+    .eq('id', contractId);
+
+  if (updateError) {
+    console.error('Status update error:', updateError);
+    return res.status(500).json({ error: 'Failed to update status' });
+  }
+
+  res.json({ success: true, message: 'Status updated' });
+});
+
 module.exports = router;
