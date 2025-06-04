@@ -8,42 +8,13 @@ const anthropic = new Anthropic({
 const CONTRACT_ANALYSIS_PROMPT = `
 You are an expert real estate contract analyzer. Analyze this contract and extract key information into a structured JSON format.
 
-CRITICAL REQUIREMENTS:
-1. Extract EXACT dates, amounts, and names from the contract text
-2. Determine pricing structure (per acre, per unit, per lot, lump sum, etc.)
-3. Identify when deposits become non-refundable (deposits are typically refundable until end of feasibility/due diligence period)
-4. Extract ALL contact information from notice provisions and signature blocks
-5. Due diligence and feasibility periods are THE SAME THING - do not create separate periods
-6. Identify ALL individual contingencies and approvals separately
-7. If information is unclear or missing, use "TBD" or null
-
-NOTICE PROVISIONS EXTRACTION:
-- Look for "Notice" sections that list all parties and their contact information
-- Extract addresses, phone numbers, emails for buyer, seller, attorneys, title company
-- Include law firm names, title company names, escrow company details
-- This is typically near the end of the contract in signature blocks or notice sections
-
-DEPOSIT REFUNDABILITY RULES:
-- First deposit: Usually refundable until end of feasibility/due diligence period
-- Second deposit: Usually refundable until deposited, then becomes non-refundable 
-- Additional deposits: Typically non-refundable once deposited
-- Look for specific language about when deposits become "hard" or "non-refundable"
-
-DUE DILIGENCE = FEASIBILITY PERIOD:
-- These are the same period, just different names
-- Do not create separate "Due Diligence" and "Feasibility" periods
-- Use whichever term appears in the contract
-- Typical length: 30-180 days from opening of escrow
-
-CONTINGENCIES - IDENTIFY EACH SEPARATELY:
-Instead of "Government Approvals", list each specific approval:
-- City Planning Commission Approval
-- County Zoning Approval  
-- Building Permit Approval
-- Environmental Impact Review
-- Fire Department Approval
-- Utility Connection Approvals
-- Each should be a separate contingency with its own deadline
+CRITICAL REQUIREMENTS FOR CONTACT INFORMATION:
+1. Look specifically for "NOTICE" or "NOTICES" sections in the contract
+2. These sections typically contain official mailing addresses, email addresses, phone numbers
+3. Extract attorney information from notice addresses, not just signature blocks
+4. Find escrow/title company details from notice addresses
+5. Distinguish between mailing addresses and property addresses
+6. Extract ALL contact methods for each party (phone, email, fax, address)
 
 REQUIRED JSON STRUCTURE:
 {
@@ -59,84 +30,138 @@ REQUIRED JSON STRUCTURE:
   },
   "parties": {
     "buyer": {
-      "name": "Exact legal name",
+      "name": "Exact legal name from signature block",
       "type": "Individual|LLC|Corporation|Partnership|Trust",
-      "contact": "Primary contact person if different from entity",
-      "phone": "Phone number if provided",
-      "email": "Email if provided",
-      "address": "Address if provided",
+      "signatoryName": "Name of person signing if different from entity",
+      "signatoryTitle": "Title of signatory",
+      "noticeAddress": {
+        "street": "Street address from notices section",
+        "city": "City",
+        "state": "State",
+        "zipCode": "ZIP code",
+        "fullAddress": "Complete formatted address"
+      },
+      "contactInfo": {
+        "phone": "Primary phone from notices",
+        "fax": "Fax number if provided",
+        "email": "Email from notices section",
+        "alternatePhone": "Secondary phone if provided",
+        "alternateEmail": "Secondary email if provided"
+      },
       "attorney": {
-        "name": "Attorney name if mentioned",
+        "name": "Attorney name from notices",
         "firm": "Law firm name",
+        "address": {
+          "street": "Attorney street address",
+          "city": "City", 
+          "state": "State",
+          "zipCode": "ZIP code",
+          "fullAddress": "Complete attorney address"
+        },
         "phone": "Attorney phone",
-        "email": "Attorney email",
-        "address": "Attorney address"
+        "fax": "Attorney fax",
+        "email": "Attorney email"
       }
     },
     "seller": {
-      "name": "Exact legal name", 
-      "type": "Individual|LLC|Corporation|Partnership|Trust",
-      "contact": "Primary contact person if different from entity",
-      "phone": "Phone number if provided",
-      "email": "Email if provided",
-      "address": "Address if provided",
+      "name": "Exact legal name from signature block",
+      "type": "Individual|LLC|Corporation|Partnership|Trust", 
+      "signatoryName": "Name of person signing if different from entity",
+      "signatoryTitle": "Title of signatory",
+      "noticeAddress": {
+        "street": "Street address from notices section",
+        "city": "City",
+        "state": "State", 
+        "zipCode": "ZIP code",
+        "fullAddress": "Complete formatted address"
+      },
+      "contactInfo": {
+        "phone": "Primary phone from notices",
+        "fax": "Fax number if provided", 
+        "email": "Email from notices section",
+        "alternatePhone": "Secondary phone if provided",
+        "alternateEmail": "Secondary email if provided"
+      },
       "attorney": {
-        "name": "Attorney name if mentioned",
+        "name": "Attorney name from notices",
         "firm": "Law firm name",
+        "address": {
+          "street": "Attorney street address",
+          "city": "City",
+          "state": "State", 
+          "zipCode": "ZIP code",
+          "fullAddress": "Complete attorney address"
+        },
         "phone": "Attorney phone",
-        "email": "Attorney email",
-        "address": "Attorney address"
+        "fax": "Attorney fax", 
+        "email": "Attorney email"
       }
     }
   },
   "titleCompany": {
-    "name": "Title company name",
+    "name": "Title company name from notices or elsewhere",
     "officer": "Title officer name",
+    "address": {
+      "street": "Title company street address",
+      "city": "City",
+      "state": "State",
+      "zipCode": "ZIP code", 
+      "fullAddress": "Complete title company address"
+    },
     "phone": "Title company phone",
-    "email": "Title company email",
-    "address": "Title company address"
+    "fax": "Title company fax",
+    "email": "Title company email"
+  },
+  "escrowCompany": {
+    "name": "Escrow company name (may be same as title company)",
+    "officer": "Escrow officer name",
+    "address": {
+      "street": "Escrow company street address", 
+      "city": "City",
+      "state": "State",
+      "zipCode": "ZIP code",
+      "fullAddress": "Complete escrow company address"
+    },
+    "phone": "Escrow company phone",
+    "fax": "Escrow company fax",
+    "email": "Escrow company email"
   },
   "escrow": {
     "openingDate": "YYYY-MM-DD format or TBD",
-    "escrowCompany": "Name if mentioned",
-    "escrowOfficer": "Name if mentioned",
-    "phone": "Escrow company phone",
-    "email": "Escrow company email"
+    "companyName": "Reference to escrowCompany above",
+    "officerName": "Reference to escrowCompany officer above"
   },
   "deposits": {
     "firstDeposit": {
       "amount": <numeric value>,
       "timing": "Exact contract language about when due",
       "actualDate": "YYYY-MM-DD calculated from timing or TBD",
-      "refundable": true,
-      "refundableUntil": "YYYY-MM-DD when feasibility/due diligence period ends",
-      "status": "not_yet_due|due_soon|past_due|made",
-      "refundabilityReason": "Refundable until end of feasibility period"
+      "refundable": boolean,
+      "refundableUntil": "YYYY-MM-DD when it becomes non-refundable",
+      "status": "not_yet_due|due_soon|past_due|made"
     },
     "secondDeposit": {
       "amount": <numeric value>,
-      "timing": "Exact contract language about when due", 
-      "actualDate": "YYYY-MM-DD calculated from timing or TBD",
-      "refundable": true,
-      "refundableUntil": "YYYY-MM-DD when deposit is actually made",
-      "status": "not_yet_due|due_soon|past_due|made",
-      "refundabilityReason": "Refundable until deposited, then becomes non-refundable"
+      "timing": "Exact contract language about when due",
+      "actualDate": "YYYY-MM-DD calculated from timing or TBD", 
+      "refundable": boolean,
+      "refundableUntil": "YYYY-MM-DD when it becomes non-refundable",
+      "status": "not_yet_due|due_soon|past_due|made"
     },
     "totalDeposits": <sum of all deposits>
   },
   "dueDiligence": {
-    "period": "Exact contract language (e.g., '60 days from Opening of Escrow' OR '180 day feasibility period')",
-    "startDate": "YYYY-MM-DD or TBD",
-    "endDate": "YYYY-MM-DD or TBD", 
-    "daysFromTrigger": <number of days>,
-    "triggerEvent": "Opening of Escrow|Title Commitment|etc",
+    "period": "Exact contract language (e.g., '30 days from Opening of Escrow')",
+    "startDate": "YYYY-MM-DD",
+    "endDate": "YYYY-MM-DD",
     "tasks": [
       {
         "task": "Property Inspections",
         "timing": "Exact contract language with trigger reference",
-        "actualDate": "YYYY-MM-DD calculated or TBD",
+        "triggerEvent": "Opening of Escrow|Title Commitment|Survey Completion|etc",
         "daysFromTrigger": <number>,
-        "triggerEvent": "Opening of Escrow|Title Commitment|etc",
+        "businessDays": boolean,
+        "actualDate": "YYYY-MM-DD calculated",
         "critical": boolean,
         "description": "What specifically must be done"
       }
@@ -144,44 +169,20 @@ REQUIRED JSON STRUCTURE:
   },
   "contingencies": [
     {
-      "name": "City Planning Commission Approval",
-      "timing": "Exact contract language",
-      "deadline": "YYYY-MM-DD calculated or TBD",
+      "name": "Descriptive name",
+      "timing": "Exact contract language", 
+      "triggerEvent": "Opening of Escrow|Title Commitment|etc",
       "daysFromTrigger": <number>,
-      "triggerEvent": "Opening of Escrow|Application Submission|etc",
-      "description": "Specific approval required from City Planning Commission",
-      "critical": true,
-      "silenceRule": "Approval|Termination|N/A",
-      "party": "buyer|seller|both"
-    },
-    {
-      "name": "County Zoning Approval",
-      "timing": "Exact contract language",
-      "deadline": "YYYY-MM-DD calculated or TBD",
-      "daysFromTrigger": <number>,
-      "triggerEvent": "Opening of Escrow|Application Submission|etc",
-      "description": "Specific approval required from County Zoning Department",
-      "critical": true,
-      "silenceRule": "Approval|Termination|N/A", 
-      "party": "buyer|seller|both"
-    },
-    {
-      "name": "Building Permit Approval",
-      "timing": "Exact contract language",
-      "deadline": "YYYY-MM-DD calculated or TBD",
-      "daysFromTrigger": <number>,
-      "triggerEvent": "Opening of Escrow|Application Submission|etc",
-      "description": "Building permits for proposed development",
-      "critical": true,
-      "silenceRule": "Approval|Termination|N/A",
-      "party": "buyer|seller|both"
+      "businessDays": boolean,
+      "deadline": "YYYY-MM-DD calculated",
+      "description": "What buyer/seller must do",
+      "critical": boolean,
+      "silenceRule": "Approval|Termination|N/A"
     }
   ],
   "closingInfo": {
-    "outsideDate": "YYYY-MM-DD or TBD",
-    "actualClosing": "Description of actual closing terms",
-    "daysFromTrigger": <number if calculated>,
-    "triggerEvent": "Due diligence end|Government approvals|etc",
+    "outsideDate": "YYYY-MM-DD",
+    "actualClosing": "Description of actual closing terms", 
     "extensions": {
       "automatic": boolean,
       "buyerOptions": "Description",
@@ -190,28 +191,10 @@ REQUIRED JSON STRUCTURE:
     "possession": "When buyer gets possession",
     "prorations": "How costs are split"
   },
-  "closingDocuments": {
-    "exhibits": [
-      {
-        "document": "Document name",
-        "exhibit": "Letter/Number",
-        "included": boolean
-      }
-    ],
-    "required": [
-      {
-        "document": "Document name", 
-        "exhibit": "None or letter/number",
-        "included": boolean
-      }
-    ]
-  },
   "specialConditions": [
     {
       "condition": "Description of special condition",
-      "deadline": "YYYY-MM-DD if applicable or TBD",
-      "daysFromTrigger": <number if applicable>,
-      "triggerEvent": "Event that starts the clock",
+      "deadline": "YYYY-MM-DD if applicable", 
       "party": "buyer|seller|both"
     }
   ],
@@ -221,68 +204,55 @@ REQUIRED JSON STRUCTURE:
     "loanType": "Conventional|FHA|VA|etc or null",
     "loanContingency": {
       "exists": boolean,
-      "deadline": "YYYY-MM-DD or TBD",
-      "daysFromTrigger": <number>,
-      "triggerEvent": "Loan application|Opening of Escrow|etc",
+      "deadline": "YYYY-MM-DD or null",
       "terms": "Description"
     }
   }
 }
 
-PRICING STRUCTURE ANALYSIS:
-- Look for language like "per acre", "per lot", "per unit", "$X per square foot"
-- Calculate price per unit if total price and unit count are given
-- Examples: "$50,000 per acre", "$500,000 for 60 lots = $8,333 per lot"
+EXTRACTION PRIORITY FOR CONTACTS:
+1. NOTICES section is primary source for all contact information
+2. Look for phrases like "Notice to Buyer:", "Notice to Seller:", "Notice to Escrow:"
+3. Attorney information often appears as "with a copy to:" in notices
+4. Escrow/Title company info may be in separate notices section
+5. Phone numbers may include office, cell, and fax
+6. Email addresses are critical - extract all mentioned
 
-DEPOSIT REFUNDABILITY RULES:
-- Identify EXACTLY when each deposit becomes non-refundable
-- Common triggers: Due diligence expiration, feasibility period end, loan approval
-- Mark as refundable until specific event occurs
-- Status calculation based on current date vs due date
+COMMON NOTICE SECTION PATTERNS:
+- "All notices required or permitted hereunder shall be in writing and shall be served..."
+- "Buyer: [Name and Address]"
+- "Seller: [Name and Address]" 
+- "With a copy to: [Attorney information]"
+- "Title/Escrow Company: [Company details]"
 
 DATE CALCULATION RULES:
-- Always show both days from trigger AND calculated date
-- Business days = weekdays only (exclude weekends)
-- Calendar days = all days including weekends
-- If trigger date is TBD, actual date should be TBD
-
-TRIGGER EVENT IDENTIFICATION:
-- Opening of Escrow (most common)
-- Title Commitment received
-- Survey completion
-- Environmental report completion
-- Loan application submission
-- Due diligence period end
-- Government approvals received
-
-CONTACT INFORMATION EXTRACTION:
-- Extract ALL phone numbers, emails, addresses
-- Identify roles (buyer, seller, attorney, title officer, escrow officer)
-- Include law firm names and title company details
-- Look for signature blocks, letterheads, contact sections
+- Always calculate actual dates from trigger dates + business days/calendar days as specified
+- If contract says "5 business days after X", count only weekdays
+- If contract says "30 days from X", count calendar days
+- If trigger date is unknown, use "TBD" for actual date
 
 ENTITY TYPE IDENTIFICATION:
-- LLC = "Limited Liability Company" or "LLC"
-- Corporation = "Inc.", "Corp.", "Corporation"
-- Trust = "Trust", "Trustee"
-- Partnership = "Partnership", "LP", "LLP"
-- Individual = No entity designator
+- Look for "LLC", "Inc.", "Corporation", "Partnership", "Trust", "LP"
+- Individual if no entity designator
+- Pay attention to exact legal names vs. signatory names
 
-CRITICAL vs STANDARD CLASSIFICATION:
-- Critical: Could terminate contract if not met (feasibility, due diligence, loan approval)
-- Standard: Important but typically don't terminate contract (title review, inspections)
+DEPOSIT REFUNDABILITY ANALYSIS:
+- Determine exactly when deposits become non-refundable
+- Usually tied to expiration of due diligence period
+- May have different rules for different deposits
+- Look for specific non-refundability language
 
 ANALYZE THIS CONTRACT:
 `;
 
 /**
- * Analyze contract text using Claude AI with enhanced extraction
+ * Analyze contract text using Claude AI with enhanced contact extraction
  * @param {string} contractText - Raw contract text
  * @returns {Promise<Object>} - Structured contract analysis
  */
 async function analyzeContract(contractText) {
   try {
-    console.log('🤖 Starting enhanced Claude analysis...');
+    console.log('🤖 Starting enhanced Claude analysis with notice address focus...');
     
     if (!process.env.ANTHROPIC_API_KEY) {
       throw new Error('ANTHROPIC_API_KEY environment variable is not set');
@@ -311,8 +281,8 @@ async function analyzeContract(contractText) {
 
     const analysisResult = JSON.parse(jsonMatch[0]);
     
-    // Enhanced validation and post-processing
-    const enhancedResult = enhanceAnalysisResult(analysisResult);
+    // Validate and enhance contact information
+    const enhancedResult = enhanceContactInformation(analysisResult);
     
     // Validate critical fields
     const validation = validateAnalysis(enhancedResult);
@@ -330,57 +300,41 @@ async function analyzeContract(contractText) {
 }
 
 /**
- * Enhance and post-process analysis results
+ * Enhance and validate contact information
  * @param {Object} analysis - Raw analysis result
- * @returns {Object} - Enhanced analysis result
+ * @returns {Object} - Enhanced analysis with better contact structure
  */
-function enhanceAnalysisResult(analysis) {
+function enhanceContactInformation(analysis) {
   const enhanced = { ...analysis };
   
-  // Calculate deposit statuses based on dates
-  if (enhanced.deposits) {
-    const today = new Date();
-    
-    ['firstDeposit', 'secondDeposit'].forEach(depositKey => {
-      const deposit = enhanced.deposits[depositKey];
-      if (deposit && deposit.actualDate && deposit.actualDate !== 'TBD') {
-        const dueDate = new Date(deposit.actualDate);
-        const daysDiff = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24));
-        
-        if (daysDiff > 7) {
-          deposit.status = 'not_yet_due';
-        } else if (daysDiff > 0) {
-          deposit.status = 'due_soon';
-        } else if (daysDiff < 0) {
-          deposit.status = 'past_due';
-        }
-      }
-    });
+  // Ensure contact structure exists for buyer
+  if (enhanced.parties?.buyer) {
+    enhanced.parties.buyer = {
+      ...enhanced.parties.buyer,
+      noticeAddress: enhanced.parties.buyer.noticeAddress || {},
+      contactInfo: enhanced.parties.buyer.contactInfo || {},
+      attorney: enhanced.parties.buyer.attorney || {}
+    };
   }
   
-  // Calculate pricing per unit if possible
-  if (enhanced.property) {
-    const prop = enhanced.property;
-    if (prop.purchasePrice && prop.size && !prop.pricePerUnit) {
-      // Try to extract numeric value from size
-      const sizeMatch = prop.size?.match(/(\d+(?:\.\d+)?)/);
-      if (sizeMatch) {
-        const numericSize = parseFloat(sizeMatch[1]);
-        prop.pricePerUnit = Math.round(prop.purchasePrice / numericSize);
-        
-        // Determine unit type from size description
-        if (prop.size.toLowerCase().includes('acre')) {
-          prop.unitType = 'acres';
-          prop.pricingStructure = 'per acre';
-        } else if (prop.size.toLowerCase().includes('lot')) {
-          prop.unitType = 'lots';
-          prop.pricingStructure = 'per lot';
-        } else if (prop.size.toLowerCase().includes('unit')) {
-          prop.unitType = 'units';
-          prop.pricingStructure = 'per unit';
-        }
-      }
-    }
+  // Ensure contact structure exists for seller
+  if (enhanced.parties?.seller) {
+    enhanced.parties.seller = {
+      ...enhanced.parties.seller,
+      noticeAddress: enhanced.parties.seller.noticeAddress || {},
+      contactInfo: enhanced.parties.seller.contactInfo || {},
+      attorney: enhanced.parties.seller.attorney || {}
+    };
+  }
+  
+  // Ensure escrow and title company structures exist
+  enhanced.titleCompany = enhanced.titleCompany || {};
+  enhanced.escrowCompany = enhanced.escrowCompany || {};
+  
+  // If escrow and title are the same company, reference appropriately
+  if (enhanced.titleCompany.name && enhanced.escrowCompany.name && 
+      enhanced.titleCompany.name === enhanced.escrowCompany.name) {
+    enhanced.escrowCompany = { ...enhanced.titleCompany };
   }
   
   return enhanced;
@@ -407,6 +361,21 @@ function validateAnalysis(analysis) {
     errors.push('Seller name not found');
   }
   
+  if (!analysis.escrow?.openingDate) {
+    errors.push('Opening of escrow date not found');
+  }
+  
+  // Validate contact information completeness
+  const buyer = analysis.parties?.buyer;
+  if (buyer && !buyer.noticeAddress?.fullAddress && !buyer.contactInfo?.email) {
+    errors.push('Buyer contact information incomplete - missing address and email');
+  }
+  
+  const seller = analysis.parties?.seller;
+  if (seller && !seller.noticeAddress?.fullAddress && !seller.contactInfo?.email) {
+    errors.push('Seller contact information incomplete - missing address and email');
+  }
+  
   // Validate date formats
   const dateFields = [
     analysis.escrow?.openingDate,
@@ -420,21 +389,6 @@ function validateAnalysis(analysis) {
     }
   });
   
-  // Validate deposit refundability logic
-  if (analysis.deposits) {
-    ['firstDeposit', 'secondDeposit'].forEach(key => {
-      const deposit = analysis.deposits[key];
-      if (deposit) {
-        if (deposit.refundable && !deposit.refundableUntil) {
-          errors.push(`${key} marked refundable but no refundableUntil date provided`);
-        }
-        if (!deposit.refundable && deposit.refundableUntil) {
-          errors.push(`${key} marked non-refundable but has refundableUntil date`);
-        }
-      }
-    });
-  }
-  
   return {
     isValid: errors.length === 0,
     errors: errors
@@ -444,5 +398,5 @@ function validateAnalysis(analysis) {
 module.exports = {
   analyzeContract,
   validateAnalysis,
-  enhanceAnalysisResult
+  enhanceContactInformation
 };
