@@ -1,9 +1,17 @@
 const Anthropic = require('@anthropic-ai/sdk');
 
-// Initialize Anthropic client
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+// Initialize Anthropic client with error handling
+let anthropic;
+try {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    throw new Error('ANTHROPIC_API_KEY environment variable is not set');
+  }
+  anthropic = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+  });
+} catch (error) {
+  console.error('Failed to initialize Anthropic client:', error);
+}
 
 const CONTRACT_ANALYSIS_PROMPT = `
 You are an expert real estate contract analyzer. Analyze this contract and extract key information into a structured JSON format.
@@ -20,7 +28,9 @@ CRITICAL REQUIREMENTS:
 9. Ensure all JSON property names are in double quotes, not single quotes
 10. Do NOT include trailing commas in arrays or objects
 
-REQUIRED JSON STRUCTURE (MUST be valid JSON):
+You must return ONLY valid JSON. No explanatory text.
+
+REQUIRED JSON STRUCTURE:
 {
   "property": {
     "address": "Full property address exactly as written",
@@ -214,25 +224,20 @@ REQUIRED JSON STRUCTURE (MUST be valid JSON):
   }
 }
 
-IMPORTANT: Return ONLY the JSON object above, properly formatted with correct double quotes. Do not include any explanatory text before or after the JSON.
-
 ANALYZE THIS CONTRACT:
 `;
 
 /**
- * Clean and fix malformed JSON string
- * @param {string} jsonString - Potentially malformed JSON string
- * @returns {string} - Fixed JSON string
+ * Clean and fix malformed JSON string with multiple strategies
  */
 function cleanJsonString(jsonString) {
   try {
-    // First, try to parse as-is
     JSON.parse(jsonString);
     return jsonString;
   } catch (error) {
-    console.log('Initial JSON parse failed, attempting to fix...');
+    console.log('JSON parse failed, attempting to fix...');
     
-    let cleaned = jsonString;
+    let cleaned = jsonString.trim();
     
     // Remove any text before the first {
     const firstBraceIndex = cleaned.indexOf('{');
@@ -246,21 +251,19 @@ function cleanJsonString(jsonString) {
       cleaned = cleaned.substring(0, lastBraceIndex + 1);
     }
     
-    // Fix common JSON issues
+    // Apply fixes in order of importance
     cleaned = cleaned
       // Remove trailing commas before closing brackets/braces
       .replace(/,(\s*[}\]])/g, '$1')
-      // Fix single quotes to double quotes (but be careful with content)
-      .replace(/:\s*'([^']*?)'/g, ': "$1"')
-      // Fix unquoted property names
+      // Fix unquoted property names (but be careful with content)
       .replace(/([{,]\s*)([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g, '$1"$2":')
-      // Fix escaped quotes that might be causing issues
-      .replace(/\\"/g, '"')
-      // Remove any remaining backslashes that aren't valid JSON escapes
-      .replace(/\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})/g, '')
+      // Fix single quotes to double quotes for property names and simple values
+      .replace(/:\s*'([^']*?)'/g, ': "$1"')
+      // Remove any control characters that might break JSON
+      .replace(/[\x00-\x1F\x7F-\x9F]/g, '')
       // Clean up any multiple consecutive commas
       .replace(/,{2,}/g, ',')
-      // Clean up whitespace
+      // Normalize whitespace
       .replace(/\s+/g, ' ')
       .trim();
     
@@ -270,17 +273,15 @@ function cleanJsonString(jsonString) {
 
 /**
  * Extract JSON from potentially mixed content
- * @param {string} content - Content that may contain JSON
- * @returns {string|null} - Extracted JSON string or null
  */
 function extractJsonFromContent(content) {
-  // Look for JSON-like content between curly braces
+  // First try to find complete JSON object
   const jsonMatch = content.match(/\{[\s\S]*\}/);
   if (jsonMatch) {
     return jsonMatch[0];
   }
   
-  // If no match found, try to find any object-like structure
+  // Fallback: find any object-like structure
   const openBrace = content.indexOf('{');
   const closeBrace = content.lastIndexOf('}');
   
@@ -292,33 +293,44 @@ function extractJsonFromContent(content) {
 }
 
 /**
- * Create a fallback minimal contract structure
- * @param {string} contractText - Original contract text for basic extraction
- * @returns {Object} - Minimal contract data structure
+ * Create a minimal fallback structure when AI analysis fails
  */
 function createFallbackStructure(contractText) {
-  console.log('Creating fallback structure due to JSON parsing failure');
+  console.log('Creating fallback structure due to AI analysis failure');
   
   // Basic text extraction for critical info
-  const lines = contractText.split('\n');
   let purchasePrice = 0;
-  let address = '';
+  let address = 'Address not found';
   
-  // Simple regex patterns to extract basic info
-  const priceMatch = contractText.match(/\$[\d,]+\.?\d*/);
-  if (priceMatch) {
-    purchasePrice = parseInt(priceMatch[0].replace(/[$,]/g, ''));
-  }
-  
-  // Look for address patterns
-  const addressMatch = contractText.match(/(?:property|address|located)[\s:]+([^\n]+)/i);
-  if (addressMatch) {
-    address = addressMatch[1].trim();
+  try {
+    // Simple regex patterns to extract basic info
+    const priceMatch = contractText.match(/\$[\d,]+(?:\.\d{2})?/);
+    if (priceMatch) {
+      const priceStr = priceMatch[0].replace(/[$,]/g, '');
+      purchasePrice = parseFloat(priceStr) || 0;
+    }
+    
+    // Look for address patterns
+    const addressPatterns = [
+      /(?:property|address|located|premises)[\s:]+([^\n\r]{10,100})/i,
+      /(?:situated|located)\s+(?:at|in)\s+([^\n\r]{10,100})/i,
+      /\d+\s+[A-Za-z\s]+(?:street|st|avenue|ave|road|rd|drive|dr|lane|ln|boulevard|blvd)[^\n\r]{0,50}/i
+    ];
+    
+    for (const pattern of addressPatterns) {
+      const match = contractText.match(pattern);
+      if (match) {
+        address = match[1] ? match[1].trim() : match[0].trim();
+        break;
+      }
+    }
+  } catch (error) {
+    console.warn('Error in basic text extraction:', error);
   }
   
   return {
     property: {
-      address: address || 'Address not found',
+      address: address,
       apn: null,
       size: null,
       purchasePrice: purchasePrice,
@@ -377,41 +389,56 @@ function createFallbackStructure(contractText) {
 }
 
 /**
- * Analyze contract text using Claude AI with robust error handling
- * @param {string} contractText - Raw contract text
- * @returns {Promise<Object>} - Structured contract analysis
+ * Analyze contract text using Claude AI with comprehensive error handling
  */
 async function analyzeContract(contractText) {
+  const startTime = Date.now();
+  
   try {
-    console.log('🤖 Starting robust Claude analysis with improved JSON handling...');
+    console.log('🤖 Starting Claude AI analysis...');
     
-    if (!process.env.ANTHROPIC_API_KEY) {
-      throw new Error('ANTHROPIC_API_KEY environment variable is not set');
+    if (!anthropic) {
+      throw new Error('Anthropic client not initialized - check API key');
     }
+
+    if (!contractText || contractText.trim().length === 0) {
+      throw new Error('No contract text provided for analysis');
+    }
+
+    if (contractText.length > 100000) {
+      console.warn('Contract text is very long, truncating to 100k characters');
+      contractText = contractText.substring(0, 100000);
+    }
+
+    console.log(`Analyzing contract text (${contractText.length} characters)...`);
 
     const message = await anthropic.messages.create({
       model: 'claude-3-5-sonnet-20241022',
       max_tokens: 8000,
-      temperature: 0.1, // Lower temperature for more consistent JSON output
+      temperature: 0.1,
+      timeout: 120000, // 2 minute timeout
       messages: [
         {
           role: 'user',
-          content: CONTRACT_ANALYSIS_PROMPT + contractText
+          content: CONTRACT_ANALYSIS_PROMPT + '\n\n' + contractText
         }
       ]
     });
 
-    const responseText = message.content[0].text;
-    console.log('📝 Raw Claude response length:', responseText.length);
+    const responseText = message.content[0]?.text;
+    if (!responseText) {
+      throw new Error('Empty response from Claude AI');
+    }
+
+    console.log(`Claude response received (${responseText.length} chars) in ${Date.now() - startTime}ms`);
     
-    // Extract JSON from response
+    // Extract and clean JSON
     let jsonString = extractJsonFromContent(responseText);
     if (!jsonString) {
-      console.warn('⚠️ No JSON found in Claude response, using fallback structure');
+      console.warn('No JSON found in Claude response');
       return createFallbackStructure(contractText);
     }
 
-    // Clean and fix the JSON string
     jsonString = cleanJsonString(jsonString);
     
     let analysisResult;
@@ -419,84 +446,85 @@ async function analyzeContract(contractText) {
       analysisResult = JSON.parse(jsonString);
       console.log('✅ Successfully parsed JSON from Claude response');
     } catch (parseError) {
-      console.error('❌ JSON parse failed after cleaning:', parseError.message);
-      console.log('Problematic JSON string:', jsonString.substring(0, 500) + '...');
+      console.error('❌ JSON parse failed:', parseError.message);
+      console.log('Problematic JSON (first 500 chars):', jsonString.substring(0, 500));
       
-      // Try one more aggressive cleaning attempt
+      // Try aggressive cleaning
       try {
-        // More aggressive cleaning for stubborn cases
         const aggressivelyCleaned = jsonString
           .replace(/[\x00-\x1F\x7F-\x9F]/g, '') // Remove control characters
-          .replace(/\\n/g, ' ') // Replace literal \n with space
-          .replace(/\\r/g, ' ') // Replace literal \r with space
-          .replace(/\\t/g, ' ') // Replace literal \t with space
-          .replace(/\s+/g, ' ') // Normalize whitespace
+          .replace(/\\n/g, ' ')
+          .replace(/\\r/g, ' ')
+          .replace(/\\t/g, ' ')
+          .replace(/\\/g, '') // Remove remaining backslashes
+          .replace(/\s+/g, ' ')
           .trim();
         
         analysisResult = JSON.parse(aggressivelyCleaned);
         console.log('✅ Successfully parsed JSON after aggressive cleaning');
-      } catch (secondParseError) {
-        console.error('❌ Second JSON parse attempt failed:', secondParseError.message);
-        console.log('Using fallback structure due to persistent JSON errors');
+      } catch (secondError) {
+        console.error('❌ Aggressive cleaning also failed:', secondError.message);
         return createFallbackStructure(contractText);
       }
     }
     
-    // Validate and enhance the result
+    // Enhance and validate the result
     const enhancedResult = enhanceContactInformation(analysisResult);
-    
-    // Validate critical fields
     const validation = validateAnalysis(enhancedResult);
+    
     if (!validation.isValid) {
-      console.warn('⚠️ Analysis validation issues:', validation.errors);
-      // Don't fail completely on validation issues, just log them
+      console.warn('⚠️ Analysis validation warnings:', validation.errors);
     }
     
-    console.log('✅ Contract analysis completed successfully');
+    console.log(`✅ Contract analysis completed in ${Date.now() - startTime}ms`);
     return enhancedResult;
 
   } catch (error) {
-    console.error('❌ Contract analysis error:', error);
+    console.error('❌ Contract analysis error:', error.message);
     
-    // Return fallback structure instead of throwing
-    console.log('Returning fallback structure due to analysis error');
+    // Check for specific error types
+    if (error.message.includes('timeout')) {
+      console.error('Analysis timed out - contract may be too complex');
+    } else if (error.message.includes('rate_limit')) {
+      console.error('Rate limit exceeded - too many requests');
+    } else if (error.message.includes('API key')) {
+      console.error('API authentication failed');
+    }
+    
+    // Always return fallback structure instead of throwing
     return createFallbackStructure(contractText);
   }
 }
 
 /**
  * Enhance and validate contact information
- * @param {Object} analysis - Raw analysis result
- * @returns {Object} - Enhanced analysis with better contact structure
  */
 function enhanceContactInformation(analysis) {
+  if (!analysis || typeof analysis !== 'object') {
+    return analysis;
+  }
+
   const enhanced = { ...analysis };
   
-  // Ensure contact structure exists for buyer
-  if (enhanced.parties?.buyer) {
-    enhanced.parties.buyer = {
-      ...enhanced.parties.buyer,
-      noticeAddress: enhanced.parties.buyer.noticeAddress || {},
-      contactInfo: enhanced.parties.buyer.contactInfo || {},
-      attorney: enhanced.parties.buyer.attorney || {}
-    };
+  // Ensure proper structure for parties
+  if (enhanced.parties) {
+    ['buyer', 'seller'].forEach(party => {
+      if (enhanced.parties[party]) {
+        enhanced.parties[party] = {
+          ...enhanced.parties[party],
+          noticeAddress: enhanced.parties[party].noticeAddress || {},
+          contactInfo: enhanced.parties[party].contactInfo || {},
+          attorney: enhanced.parties[party].attorney || {}
+        };
+      }
+    });
   }
   
-  // Ensure contact structure exists for seller
-  if (enhanced.parties?.seller) {
-    enhanced.parties.seller = {
-      ...enhanced.parties.seller,
-      noticeAddress: enhanced.parties.seller.noticeAddress || {},
-      contactInfo: enhanced.parties.seller.contactInfo || {},
-      attorney: enhanced.parties.seller.attorney || {}
-    };
-  }
-  
-  // Ensure escrow and title company structures exist
+  // Ensure company structures exist
   enhanced.titleCompany = enhanced.titleCompany || {};
   enhanced.escrowCompany = enhanced.escrowCompany || {};
   
-  // If escrow and title are the same company, reference appropriately
+  // If title and escrow are the same company, reference appropriately
   if (enhanced.titleCompany.name && enhanced.escrowCompany.name && 
       enhanced.titleCompany.name === enhanced.escrowCompany.name) {
     enhanced.escrowCompany = { ...enhanced.titleCompany };
@@ -506,39 +534,31 @@ function enhanceContactInformation(analysis) {
 }
 
 /**
- * Validate analysis results to catch common errors
- * @param {Object} analysis - Analysis result object
- * @returns {Object} - Validation result with errors
+ * Validate analysis results
  */
 function validateAnalysis(analysis) {
   const errors = [];
   
-  // Check required fields
-  if (!analysis.property?.purchasePrice) {
-    errors.push('Purchase price not found');
+  if (!analysis || typeof analysis !== 'object') {
+    errors.push('Analysis result is not a valid object');
+    return { isValid: false, errors };
   }
   
-  if (!analysis.parties?.buyer?.name) {
+  // Check critical fields
+  if (!analysis.property?.purchasePrice || analysis.property.purchasePrice === 0) {
+    errors.push('Purchase price not found or is zero');
+  }
+  
+  if (!analysis.parties?.buyer?.name || analysis.parties.buyer.name === 'TBD') {
     errors.push('Buyer name not found');
   }
   
-  if (!analysis.parties?.seller?.name) {
+  if (!analysis.parties?.seller?.name || analysis.parties.seller.name === 'TBD') {
     errors.push('Seller name not found');
   }
   
-  if (!analysis.escrow?.openingDate) {
+  if (!analysis.escrow?.openingDate || analysis.escrow.openingDate === 'TBD') {
     errors.push('Opening of escrow date not found');
-  }
-  
-  // Validate contact information completeness
-  const buyer = analysis.parties?.buyer;
-  if (buyer && !buyer.noticeAddress?.fullAddress && !buyer.contactInfo?.email) {
-    errors.push('Buyer contact information incomplete - missing address and email');
-  }
-  
-  const seller = analysis.parties?.seller;
-  if (seller && !seller.noticeAddress?.fullAddress && !seller.contactInfo?.email) {
-    errors.push('Seller contact information incomplete - missing address and email');
   }
   
   // Validate date formats
